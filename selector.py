@@ -120,14 +120,14 @@ class Model:
       q_vector = tf.map_fn(lambda x: fn(x), self._questions, dtype=tf.float32)
       q_embedding = tf.transpose(q_vector, perm=[1, 0, 2])
       # shared lstm encoder
-      lstm_enc = tf.nn.rnn_cell.LSTMCell(hidden_size)
+      lstm_enc = tf.contrib.rnn.LSTMCell(hidden_size)
 
     with tf.variable_scope('c_embedding'), tf.device(self._next_device()):
       # compute context embedding
       c, _ = tf.nn.dynamic_rnn(lstm_enc, c_embedding, dtype=tf.float32)
       # append sentinel
       fn = lambda x: tf.concat(
-          0, [x, tf.zeros([1, hidden_size], dtype=tf.float32)])
+          axis=0, values=[x, tf.zeros([1, hidden_size], dtype=tf.float32)])
       c_encoding = tf.map_fn(lambda x: fn(x), c, dtype=tf.float32)
 
     with tf.variable_scope('q_embedding'), tf.device(self._next_device()):
@@ -135,7 +135,7 @@ class Model:
       q, _ = tf.nn.dynamic_rnn(lstm_enc, q_embedding, dtype=tf.float32)
       # append sentinel
       fn = lambda x: tf.concat(
-          0, [x, tf.zeros([1, hidden_size], dtype=tf.float32)])
+          axis=0, values=[x, tf.zeros([1, hidden_size], dtype=tf.float32)])
       q_encoding = tf.map_fn(lambda x: fn(x), q, dtype=tf.float32)
       # allow variation between c_embedding and q_embedding
       q_encoding = tf.tanh(batch_linear(q_encoding, min_timesteps+1, True))
@@ -143,7 +143,7 @@ class Model:
 
     with tf.variable_scope('coattention'), tf.device(self._next_device()):
       # compute affinity matrix, (batch_size, context+1, question+1)
-      L = tf.batch_matmul(c_encoding, q_variation)
+      L = tf.matmul(c_encoding, q_variation)
       # shape = (batch_size, question+1, context+1)
       L_t = tf.transpose(L, perm=[0, 2, 1])
       # normalize with respect to question
@@ -151,23 +151,23 @@ class Model:
       # normalize with respect to context
       a_c = tf.map_fn(lambda x: tf.nn.softmax(x), L, dtype=tf.float32)
       # summaries with respect to question, (batch_size, question+1, hidden_size)
-      c_q = tf.batch_matmul(a_q, c_encoding)
-      c_q_emb = tf.concat(1, [q_variation, tf.transpose(c_q, perm=[0, 2 ,1])])
+      c_q = tf.matmul(a_q, c_encoding)
+      c_q_emb = tf.concat(axis=1, values=[q_variation, tf.transpose(c_q, perm=[0, 2 ,1])])
       # summaries of previous attention with respect to context
-      c_d = tf.batch_matmul(c_q_emb, a_c, adj_y=True)
+      c_d = tf.matmul(c_q_emb, a_c, adjoint_b=True)
       # final coattention context, (batch_size, context+1, 3*hidden_size)
-      co_att = tf.concat(2, [c_encoding, tf.transpose(c_d, perm=[0, 2, 1])])
+      co_att = tf.concat(axis=2, values=[c_encoding, tf.transpose(c_d, perm=[0, 2, 1])])
 
     with tf.variable_scope('encoder'), tf.device(self._next_device()):
       # LSTM for coattention encoding
-      cell_fw = tf.nn.rnn_cell.LSTMCell(hidden_size)
-      cell_bw = tf.nn.rnn_cell.LSTMCell(hidden_size)
+      cell_fw = tf.contrib.rnn.LSTMCell(hidden_size)
+      cell_bw = tf.contrib.rnn.LSTMCell(hidden_size)
       # compute coattention encoding
       u, _ = tf.nn.bidirectional_dynamic_rnn(
           cell_fw, cell_bw, co_att,
           sequence_length=tf.to_int64([max_timesteps]*batch_size),
           dtype=tf.float32)
-      self._u = tf.concat(2, u)
+      self._u = tf.concat(axis=2, values=u)
 
   def _build_decoder(self):
     """Builds dynamic decoder."""
@@ -187,7 +187,7 @@ class Model:
     with tf.variable_scope('selector'):
       with tf.device(self._next_device()):
         # LSTM for decoding
-        lstm_dec = tf.nn.rnn_cell.LSTMCell(hidden_size)
+        lstm_dec = tf.contrib.rnn.LSTMCell(hidden_size)
         # init highway fn
         highway_alpha = highway_maxout(hidden_size, maxout_size)
         highway_beta = highway_maxout(hidden_size, maxout_size)
@@ -196,7 +196,7 @@ class Model:
         # batch indices
         loop_until = tf.to_int32(np.array(range(batch_size)))
         # initial estimated positions
-        s, e = tf.split(0, 2, self._guesses)
+        s, e = tf.split(axis=0, num_or_size_splits=2, value=self._guesses)
       with tf.device(self._next_device()):
         fn = lambda idx: select(self._u, s, idx)
         u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
@@ -210,9 +210,9 @@ class Model:
       for step in range(max_decode_steps):
         if step > 0: vs.reuse_variables()
         # single step lstm
-        _input = tf.concat(1, [u_s, u_e])
-        _, h = tf.nn.rnn(lstm_dec, [_input], dtype=tf.float32)
-        h_state = tf.concat(1, h)
+        _input = tf.concat(axis=1, values=[u_s, u_e])
+        _, h = tf.contrib.rnn.static_rnn(lstm_dec, [_input], dtype=tf.float32)
+        h_state = tf.concat(axis=1, values=h)
         with tf.variable_scope('highway_alpha'):
           # compute start position first
           fn = lambda u_t: highway_alpha(u_t, h_state, u_s, u_e)
@@ -247,7 +247,7 @@ class Model:
     with tf.device(self._next_device()):
       labels = tf.reshape(labels, [self._params.batch_size])
       cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-          logits, labels, name='per_step_cross_entropy')
+          logits=logits, labels=labels, name='per_step_cross_entropy')
       cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
       tf.add_to_collection('per_step_losses', cross_entropy_mean)
       return tf.add_n(tf.get_collection('per_step_losses'), name='per_step_loss')
@@ -264,13 +264,13 @@ class Model:
     with tf.device(self._get_gpu(self._num_gpus-1)):
       grads, global_norm = tf.clip_by_global_norm(
           tf.gradients(self._loss, tvars), params.max_grad_norm)
-    tf.scalar_summary('global_norm', global_norm)
+    tf.summary.scalar('global_norm', global_norm)
     optimizer = tf.train.AdamOptimizer(self._lr_rate)
-    tf.scalar_summary('learning rate', self._lr_rate)
+    tf.summary.scalar('learning rate', self._lr_rate)
     with tf.device(self._next_device()):
       self._train_op = optimizer.apply_gradients(
           zip(grads, tvars), global_step=self._global_step, name='train_step')
-    self._summaries = tf.merge_all_summaries()
+    self._summaries = tf.summary.merge_all()
 
     return self._train_op, self._loss,
 
@@ -279,11 +279,11 @@ class Model:
     self._build_encoder()
     self._build_decoder()
     if self._params.mode != 'decode':
-      alpha_true, beta_true = tf.split(0, 2, self._answers)
+      alpha_true, beta_true = tf.split(axis=0, num_or_size_splits=2, value=self._answers)
       self._global_step = tf.Variable(0, name='global_step', trainable=False)
       self._loss = self._loss_multitask(self._alpha, alpha_true,
                                         self._beta, beta_true)
     if self._params.mode == 'train':
       self._add_train_op()
-    self._summaries = tf.merge_all_summaries()
+    self._summaries = tf.summary.merge_all()
     tf.logging.info('graph built...')

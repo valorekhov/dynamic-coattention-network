@@ -110,9 +110,9 @@ def highway_maxout(hidden_size, pool_size):
     u_s = _to_3d(u_s)
     u_e = _to_3d(u_e)
     # non-linear projection of decoder state and coattention
-    state_s = tf.concat(1, [h, u_s, u_e])
+    state_s = tf.concat(axis=1, values=[h, u_s, u_e])
     r = tf.tanh(batch_linear(state_s, hidden_size, False, name='r'))
-    u_r = tf.concat(1, [u_t, r])
+    u_r = tf.concat(axis=1, values=[u_t, r])
     # first maxout
     m_t1 = batch_linear(u_r, pool_size*hidden_size, True, name='m_1')
     m_t1 = maxout(m_t1, hidden_size, axis=1)
@@ -120,7 +120,7 @@ def highway_maxout(hidden_size, pool_size):
     m_t2 = batch_linear(m_t1, pool_size*hidden_size, True, name='m_2')
     m_t2 = maxout(m_t2, hidden_size, axis=1)
     # highway connection
-    mm = tf.concat(1, [m_t1, m_t2])
+    mm = tf.concat(axis=1, values=[m_t1, m_t2])
     # final maxout
     res = maxout(batch_linear(mm, pool_size, True, name='mm'), 1, axis=1)
     return res

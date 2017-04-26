@@ -67,7 +67,7 @@ def _train(model, data_batcher):
     saver = tf.train.Saver()
     # Train dir is different from log_root to avoid summary directory
     # conflict with Supervisor.
-    summary_writer = tf.train.SummaryWriter(FLAGS.train_dir)
+    summary_writer = tf.summary.FileWriter(FLAGS.train_dir)
     sv = tf.train.Supervisor(logdir=FLAGS.log_root,
                              is_chief=True,
                              saver=saver,
@@ -114,7 +114,7 @@ def _eval(model, data_batcher):
   """Runs model eval."""
   model.build_graph()
   saver = tf.train.Saver()
-  summary_writer = tf.train.SummaryWriter(FLAGS.eval_dir)
+  summary_writer = tf.summary.FileWriter(FLAGS.eval_dir)
   sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
   running_avg_loss = 0
   step = 0
